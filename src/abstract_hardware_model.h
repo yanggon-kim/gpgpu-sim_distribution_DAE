@@ -1073,6 +1073,7 @@ class warp_inst_t : public inst_t {
     m_is_depbar = false;
 
     m_depbar_group_no = 0;
+    m_dae_bypassed = false;
   }
   warp_inst_t(const core_config *config) {
     m_uid = 0;
@@ -1094,6 +1095,7 @@ class warp_inst_t : public inst_t {
     m_is_depbar = false;
 
     m_depbar_group_no = 0;
+    m_dae_bypassed = false;
   }
   virtual ~warp_inst_t() {}
 
@@ -1101,7 +1103,10 @@ class warp_inst_t : public inst_t {
   void broadcast_barrier_reduction(const active_mask_t &access_mask);
   void do_atomic(bool forceDo = false);
   void do_atomic(const active_mask_t &access_mask, bool forceDo = false);
-  void clear() { m_empty = true; }
+  void clear() {
+    m_empty = true;
+    m_dae_bypassed = false;
+  }
 
   void issue(const active_mask_t &mask, unsigned warp_id,
              unsigned long long cycle, int dynamic_warp_id, int sch_id,
@@ -1286,6 +1291,9 @@ class warp_inst_t : public inst_t {
   bool m_is_depbar;
 
   unsigned int m_depbar_group_no;
+
+  // DAE: flag indicating this instruction was issued via DAE scoreboard bypass
+  bool m_dae_bypassed;
 };
 
 void move_warp(warp_inst_t *&dst, warp_inst_t *&src);

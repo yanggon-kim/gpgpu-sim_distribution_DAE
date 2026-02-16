@@ -32,7 +32,8 @@
 #include "shader_trace.h"
 
 // Constructor
-Scoreboard::Scoreboard(unsigned sid, unsigned n_warps, class gpgpu_t* gpu)
+Scoreboard::Scoreboard(unsigned sid, unsigned n_warps, class gpgpu_t* gpu,
+                       const shader_core_config* config)
     : longopregs() {
   m_sid = sid;
   // Initialize size of table
@@ -40,6 +41,10 @@ Scoreboard::Scoreboard(unsigned sid, unsigned n_warps, class gpgpu_t* gpu)
   longopregs.resize(n_warps);
 
   m_gpu = gpu;
+  m_config = config;
+
+  // DAE: initialize per-warp load counters
+  m_dae_load_count.resize(n_warps, 0);
 }
 
 // Print scoreboard contents
@@ -57,6 +62,13 @@ void Scoreboard::printContents() const {
 
 void Scoreboard::reserveRegister(unsigned wid, unsigned regnum) {
   if (!(reg_table[wid].find(regnum) == reg_table[wid].end())) {
+    if (m_config->gpgpu_dae_enabled) {
+      // DAE: register already reserved (WAW). This is expected when DAE
+      // bypasses the scoreboard — a later instruction can issue while a
+      // previous write to the same register is still pending.
+      // m_pending_writes reference counting handles correctness.
+      return;
+    }
     printf(
         "Error: trying to reserve an already reserved register (sid=%d, "
         "wid=%d, regnum=%d).",
@@ -151,4 +163,46 @@ bool Scoreboard::checkCollision(unsigned wid, const class inst_t* inst) const {
 
 bool Scoreboard::pendingWrites(unsigned wid) const {
   return !reg_table[wid].empty();
+}
+
+// DAE: Check if ALL collisions are due to long-operation registers
+// (i.e., loads from global/local/tex memory). Returns true only if every
+// colliding register is in longopregs — mixed dependencies (some long-op,
+// some ALU) are NOT safe to bypass.
+bool Scoreboard::pendingOnLongOp(unsigned wid, const inst_t* inst) const {
+  std::set<int> inst_regs;
+  for (unsigned i = 0; i < inst->outcount; i++)
+    inst_regs.insert(inst->out[i]);
+  for (unsigned i = 0; i < inst->incount; i++)
+    inst_regs.insert(inst->in[i]);
+  if (inst->pred > 0) inst_regs.insert(inst->pred);
+  if (inst->ar1 > 0) inst_regs.insert(inst->ar1);
+  if (inst->ar2 > 0) inst_regs.insert(inst->ar2);
+
+  bool has_any_collision = false;
+  for (std::set<int>::const_iterator it = inst_regs.begin();
+       it != inst_regs.end(); it++) {
+    if (reg_table[wid].find(*it) != reg_table[wid].end()) {
+      has_any_collision = true;
+      // If this collision is NOT from a long op, bypass is unsafe
+      if (longopregs[wid].find(*it) == longopregs[wid].end()) {
+        return false;
+      }
+    }
+  }
+  return has_any_collision;
+}
+
+bool Scoreboard::daeCanBypass(unsigned wid) const {
+  return m_config->gpgpu_dae_enabled &&
+         m_dae_load_count[wid] < m_config->gpgpu_dae_fifo_depth;
+}
+
+void Scoreboard::daeIncrementLoad(unsigned wid) {
+  m_dae_load_count[wid]++;
+}
+
+void Scoreboard::daeDecrementLoad(unsigned wid) {
+  assert(m_dae_load_count[wid] > 0);
+  m_dae_load_count[wid]--;
 }

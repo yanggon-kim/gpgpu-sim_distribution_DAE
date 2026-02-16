@@ -37,9 +37,12 @@
 
 #include "../abstract_hardware_model.h"
 
+class shader_core_config;
+
 class Scoreboard {
  public:
-  Scoreboard(unsigned sid, unsigned n_warps, class gpgpu_t *gpu);
+  Scoreboard(unsigned sid, unsigned n_warps, class gpgpu_t *gpu,
+             const shader_core_config *config);
 
   void reserveRegisters(const warp_inst_t *inst);
   void releaseRegisters(const warp_inst_t *inst);
@@ -49,6 +52,12 @@ class Scoreboard {
   bool pendingWrites(unsigned wid) const;
   void printContents() const;
   const bool islongop(unsigned warp_id, unsigned regnum);
+
+  // DAE (Decoupled Access-Execute) methods
+  bool pendingOnLongOp(unsigned wid, const inst_t *inst) const;
+  bool daeCanBypass(unsigned wid) const;
+  void daeIncrementLoad(unsigned wid);
+  void daeDecrementLoad(unsigned wid);
 
  private:
   void reserveRegister(unsigned wid, unsigned regnum);
@@ -63,6 +72,10 @@ class Scoreboard {
   std::vector<std::set<unsigned> > longopregs;
 
   class gpgpu_t *m_gpu;
+  const shader_core_config *m_config;
+
+  // DAE: outstanding DAE-bypassed loads per warp
+  std::vector<unsigned> m_dae_load_count;
 };
 
 #endif /* SCOREBOARD_H_ */

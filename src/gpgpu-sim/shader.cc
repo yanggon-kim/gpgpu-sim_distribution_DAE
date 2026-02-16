@@ -185,7 +185,7 @@ void shader_core_ctx::create_front_pipeline() {
 }
 
 void shader_core_ctx::create_schedulers() {
-  m_scoreboard = new Scoreboard(m_sid, m_config->max_warps_per_shader, m_gpu);
+  m_scoreboard = new Scoreboard(m_sid, m_config->max_warps_per_shader, m_gpu, m_config);
 
   // scedulers
   // must currently occur after all inputs have been initialized.
@@ -739,6 +739,12 @@ void shader_core_stats::print(FILE *fout) const {
     fprintf(fout, "WS%d:%d\t", i, dual_issue_nums[i]);
   fprintf(fout, "\n");
 
+  // DAE statistics
+  if (m_config->gpgpu_dae_enabled) {
+    fprintf(fout, "gpgpu_dae_bypasses_total = %llu\n", m_dae_bypasses_total);
+    fprintf(fout, "gpgpu_dae_bypasses_loads = %llu\n", m_dae_bypasses_loads);
+  }
+
   m_outgoing_traffic_stats->print(fout);
   m_incoming_traffic_stats->print(fout);
 }
@@ -1036,7 +1042,8 @@ void exec_shader_core_ctx::func_exec_inst(warp_inst_t &inst) {
 void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
                                  const warp_inst_t *next_inst,
                                  const active_mask_t &active_mask,
-                                 unsigned warp_id, unsigned sch_id) {
+                                 unsigned warp_id, unsigned sch_id,
+                                 bool dae_bypassed) {
   warp_inst_t **pipe_reg =
       pipe_reg_set.get_free(m_config->sub_core_model, sch_id);
   assert(pipe_reg);
@@ -1044,6 +1051,7 @@ void shader_core_ctx::issue_warp(register_set &pipe_reg_set,
   m_warp[warp_id]->ibuffer_free();
   assert(next_inst->valid());
   **pipe_reg = *next_inst;  // static instruction information
+  (*pipe_reg)->m_dae_bypassed = dae_bypassed;  // DAE: set on pipeline copy
   (*pipe_reg)->issue(
       active_mask, warp_id, m_gpu->gpu_tot_sim_cycle + m_gpu->gpu_sim_cycle,
       m_warp[warp_id]->get_dynamic_warp_id(), sch_id,
@@ -1330,16 +1338,31 @@ void scheduler_unit::cycle() {
           warp(warp_id).ibuffer_flush();
         } else {
           valid_inst = true;
-          if (!m_scoreboard->checkCollision(warp_id, pI)) {
+
+          // DAE: check scoreboard and potentially bypass
+          bool scoreboard_clear =
+              !m_scoreboard->checkCollision(warp_id, pI);
+          bool dae_bypass = false;
+          if (!scoreboard_clear &&
+              m_scoreboard->pendingOnLongOp(warp_id, pI) &&
+              m_scoreboard->daeCanBypass(warp_id)) {
+            dae_bypass = true;
+          }
+
+          if (scoreboard_clear || dae_bypass) {
             SCHED_DPRINTF(
-                "Warp (warp_id %u, dynamic_warp_id %u) passes scoreboard\n",
-                (*iter)->get_warp_id(), (*iter)->get_dynamic_warp_id());
+                "Warp (warp_id %u, dynamic_warp_id %u) passes scoreboard%s\n",
+                (*iter)->get_warp_id(), (*iter)->get_dynamic_warp_id(),
+                dae_bypass ? " (DAE bypass)" : "");
             ready_inst = true;
 
             const active_mask_t &active_mask =
                 m_shader->get_active_mask(warp_id, pI);
 
             assert(warp(warp_id).inst_in_pipeline());
+
+            // Capture op before issue_warp (which frees ibuffer)
+            unsigned inst_op = pI->op;
 
             if ((pI->op == LOAD_OP) || (pI->op == STORE_OP) ||
                 (pI->op == MEMORY_BARRIER_OP) ||
@@ -1350,7 +1373,7 @@ void scheduler_unit::cycle() {
                   (!diff_exec_units ||
                    previous_issued_inst_exec_type != exec_unit_type_t::MEM)) {
                 m_shader->issue_warp(*m_mem_out, pI, active_mask, warp_id,
-                                     m_id);
+                                     m_id, dae_bypass);
                 issued++;
                 issued_inst = true;
                 warp_inst_issued = true;
@@ -1415,14 +1438,14 @@ void scheduler_unit::cycle() {
 
                 if (execute_on_SP) {
                   m_shader->issue_warp(*m_sp_out, pI, active_mask, warp_id,
-                                       m_id);
+                                       m_id, dae_bypass);
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
                   previous_issued_inst_exec_type = exec_unit_type_t::SP;
                 } else if (execute_on_INT) {
                   m_shader->issue_warp(*m_int_out, pI, active_mask, warp_id,
-                                       m_id);
+                                       m_id, dae_bypass);
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1439,7 +1462,7 @@ void scheduler_unit::cycle() {
 
                 if (dp_pipe_avail) {
                   m_shader->issue_warp(*m_dp_out, pI, active_mask, warp_id,
-                                       m_id);
+                                       m_id, dae_bypass);
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1459,7 +1482,7 @@ void scheduler_unit::cycle() {
 
                 if (sfu_pipe_avail) {
                   m_shader->issue_warp(*m_sfu_out, pI, active_mask, warp_id,
-                                       m_id);
+                                       m_id, dae_bypass);
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1475,7 +1498,7 @@ void scheduler_unit::cycle() {
 
                 if (tensor_core_pipe_avail) {
                   m_shader->issue_warp(*m_tensor_core_out, pI, active_mask,
-                                       warp_id, m_id);
+                                       warp_id, m_id, dae_bypass);
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1496,7 +1519,7 @@ void scheduler_unit::cycle() {
 
                 if (spec_pipe_avail) {
                   m_shader->issue_warp(*spec_reg_set, pI, active_mask, warp_id,
-                                       m_id);
+                                       m_id, dae_bypass);
                   issued++;
                   issued_inst = true;
                   warp_inst_issued = true;
@@ -1506,6 +1529,17 @@ void scheduler_unit::cycle() {
               }
 
             }  // end of else
+
+            // DAE: track bypassed loads for FIFO depth limiting
+            if (warp_inst_issued && dae_bypass) {
+              bool is_load = (inst_op == LOAD_OP ||
+                              inst_op == TENSOR_CORE_LOAD_OP);
+              if (is_load) {
+                m_scoreboard->daeIncrementLoad(warp_id);
+                m_stats->m_dae_bypasses_loads++;
+              }
+              m_stats->m_dae_bypasses_total++;
+            }
           } else {
             SCHED_DPRINTF(
                 "Warp (warp_id %u, dynamic_warp_id %u) fails scoreboard\n",
@@ -2136,6 +2170,7 @@ void ldst_unit::L1_latency_queue_cycle() {
         assert(!read_sent);
         l1_latency_queue[j][0] = NULL;
         if (mf_next->get_inst().is_load()) {
+          bool l1_insn_completed = false;
           for (unsigned r = 0; r < MAX_OUTPUT_VALUES; r++)
             if (mf_next->get_inst().out[r] > 0) {
               assert(m_pending_writes[mf_next->get_inst().warp_id()]
@@ -2149,8 +2184,14 @@ void ldst_unit::L1_latency_queue_cycle() {
                 m_scoreboard->releaseRegister(mf_next->get_inst().warp_id(),
                                               mf_next->get_inst().out[r]);
                 m_core->warp_inst_complete(mf_next->get_inst());
+                l1_insn_completed = true;
               }
             }
+
+          // DAE: decrement load count for DAE-bypassed loads completing via L1 hit
+          if (l1_insn_completed && mf_next->get_inst().m_dae_bypassed) {
+            m_scoreboard->daeDecrementLoad(mf_next->get_inst().warp_id());
+          }
 
           // release LDGSTS
           if (mf_next->get_inst().m_is_ldgsts) {
@@ -2727,6 +2768,11 @@ void ldst_unit::writeback() {
         if (m_next_wb.m_is_ldgsts) {
           m_core->unset_depbar(m_next_wb);
         }
+        // DAE: decrement load count when a DAE-bypassed load fully completes
+        if (m_next_wb.m_dae_bypassed &&
+            (m_next_wb.op == LOAD_OP || m_next_wb.op == TENSOR_CORE_LOAD_OP)) {
+          m_scoreboard->daeDecrementLoad(m_next_wb.warp_id());
+        }
       }
 
       m_next_wb.clear();
@@ -2953,6 +2999,13 @@ void ldst_unit::cycle() {
         if (!pending_requests) {
           m_core->warp_inst_complete(*m_dispatch_reg);
           m_scoreboard->releaseRegisters(m_dispatch_reg);
+
+          // DAE: decrement load count for completed DAE-bypassed loads
+          if (m_dispatch_reg->m_dae_bypassed &&
+              (m_dispatch_reg->op == LOAD_OP ||
+               m_dispatch_reg->op == TENSOR_CORE_LOAD_OP)) {
+            m_scoreboard->daeDecrementLoad(m_dispatch_reg->warp_id());
+          }
 
           // release LDGSTS
           if (m_dispatch_reg->m_is_ldgsts) {

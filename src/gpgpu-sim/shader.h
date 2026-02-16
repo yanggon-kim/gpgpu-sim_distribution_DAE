@@ -1716,6 +1716,10 @@ class shader_core_config : public core_config {
   char *specialized_unit_string[SPECIALIZED_UNIT_NUM];
   mutable std::vector<specialized_unit_params> m_specialized_unit;
   unsigned m_specialized_unit_num;
+
+  // DAE (Decoupled Access-Execute) configuration
+  bool gpgpu_dae_enabled;
+  unsigned gpgpu_dae_fifo_depth;
 };
 
 struct shader_core_stats_pod {
@@ -1928,6 +1932,10 @@ class shader_core_stats : public shader_core_stats_pod {
 
     m_shader_dynamic_warp_issue_distro.resize(config->num_shader());
     m_shader_warp_slot_issue_distro.resize(config->num_shader());
+
+    // DAE stats
+    m_dae_bypasses_total = 0;
+    m_dae_bypasses_loads = 0;
   }
 
   ~shader_core_stats() {
@@ -1990,6 +1998,10 @@ class shader_core_stats : public shader_core_stats_pod {
   void visualizer_print(gzFile visualizer_file);
 
   void print(FILE *fout) const;
+
+  // DAE statistics (public for direct access from scheduler)
+  unsigned long long m_dae_bypasses_total;
+  unsigned long long m_dae_bypasses_loads;
 
   const std::vector<std::vector<unsigned>> &get_dynamic_warp_issue() const {
     return m_shader_dynamic_warp_issue_distro;
@@ -2446,7 +2458,7 @@ class shader_core_ctx : public core_t {
   friend class LooseRoundRobbinScheduler;
   virtual void issue_warp(register_set &warp, const warp_inst_t *pI,
                           const active_mask_t &active_mask, unsigned warp_id,
-                          unsigned sch_id);
+                          unsigned sch_id, bool dae_bypassed = false);
 
   void create_front_pipeline();
   void create_schedulers();

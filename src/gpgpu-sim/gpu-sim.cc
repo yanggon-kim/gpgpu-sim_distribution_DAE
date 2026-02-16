@@ -662,6 +662,16 @@ void shader_core_config::reg_options(class OptionParser *opp) {
                            "OC_SPEC>:<OC_EX_SPEC>,<NAME>}",
                            "0,4,4,4,4,BRA");
   }
+
+  // DAE (Decoupled Access-Execute) options
+  option_parser_register(
+      opp, "-gpgpu_dae_enabled", OPT_BOOL, &gpgpu_dae_enabled,
+      "Enable DAE scoreboard bypass for dependent load chains (default = off)",
+      "0");
+  option_parser_register(
+      opp, "-gpgpu_dae_fifo_depth", OPT_UINT32, &gpgpu_dae_fifo_depth,
+      "DAE FIFO depth: max outstanding DAE-bypassed loads per warp (default = 32)",
+      "32");
 }
 
 void gpgpu_sim_config::reg_options(option_parser_t opp) {
