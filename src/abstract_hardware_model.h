@@ -940,6 +940,7 @@ class inst_t {
     m_decoded = false;
     pc = (address_type)-1;
     reconvergence_pc = (address_type)-1;
+    branch_target_pc = 0;
     op = NO_OP;
     bar_type = NOT_BAR;
     red_type = NOT_RED;
@@ -1026,6 +1027,7 @@ class inst_t {
 
   address_type reconvergence_pc;  // -1 => not a branch, -2 => use function
                                   // return address
+  address_type branch_target_pc;  // actual branch target PC (0 if not a branch)
 
   unsigned out[8];
   unsigned outcount;
@@ -1073,6 +1075,7 @@ class warp_inst_t : public inst_t {
     m_is_depbar = false;
 
     m_depbar_group_no = 0;
+    m_dae_ap_load = false;
   }
   warp_inst_t(const core_config *config) {
     m_uid = 0;
@@ -1094,6 +1097,7 @@ class warp_inst_t : public inst_t {
     m_is_depbar = false;
 
     m_depbar_group_no = 0;
+    m_dae_ap_load = false;
   }
   virtual ~warp_inst_t() {}
 
@@ -1286,6 +1290,9 @@ class warp_inst_t : public inst_t {
   bool m_is_depbar;
 
   unsigned int m_depbar_group_no;
+
+  // DAE Access Processor
+  bool m_dae_ap_load;  // this load was issued by DAE AP
 };
 
 void move_warp(warp_inst_t *&dst, warp_inst_t *&src);

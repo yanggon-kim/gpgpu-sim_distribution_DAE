@@ -1,5 +1,6 @@
 # Exclude power_interface.cc if no power model
 list(APPEND gpgpusim_SRC addrdec.cc
+    dae_ap.cc
     dram.cc
     dram_sched.cc
     gpu-cache.cc

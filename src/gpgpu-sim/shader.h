@@ -56,6 +56,7 @@
 #include "scoreboard.h"
 #include "stack.h"
 #include "stats.h"
+#include "dae_ap.h"
 #include "traffic_breakdown.h"
 
 #define NO_OP_FLAG 0xFF
@@ -1371,6 +1372,10 @@ class ldst_unit : public pipelined_simd_unit {
   void invalidate();
   void writeback();
 
+  // DAE Access Processor: issue a load to L1 cache on behalf of AP
+  bool ap_access_load(unsigned warp_id, const warp_inst_t &inst,
+                      unsigned dest_reg);
+
   // accessors
   virtual unsigned clock_multiplier() const;
 
@@ -1716,6 +1721,10 @@ class shader_core_config : public core_config {
   char *specialized_unit_string[SPECIALIZED_UNIT_NUM];
   mutable std::vector<specialized_unit_params> m_specialized_unit;
   unsigned m_specialized_unit_num;
+
+  // DAE Access Processor
+  bool gpgpu_dae_ap_enabled;
+  unsigned gpgpu_dae_ap_fifo_depth;
 };
 
 struct shader_core_stats_pod {
@@ -2124,6 +2133,19 @@ class shader_core_ctx : public core_t {
   bool warp_waiting_at_mem_barrier(unsigned warp_id);
   void set_max_cta(const kernel_info_t &kernel);
   void warp_inst_complete(const warp_inst_t &inst);
+
+  // DAE Access Processor
+  dae_ap_unit *get_dae_ap() { return m_dae_ap; }
+  bool dae_ap_enabled() const { return m_config->gpgpu_dae_ap_enabled; }
+  ldst_unit *get_ldst_unit() { return m_ldst_unit; }
+  address_type get_warp_pc(unsigned wid) const { return m_warp[wid]->get_pc(); }
+  bool is_warp_done(unsigned wid) const {
+    return m_warp[wid]->done_exit();
+  }
+  unsigned long long get_cycle() const;
+  const warp_inst_t *dae_get_next_inst(unsigned warp_id, address_type pc) {
+    return get_next_inst(warp_id, pc);
+  }
 
   // accessors
   std::list<unsigned> get_regs_written(const inst_t &fvt) const;
@@ -2548,6 +2570,7 @@ class shader_core_ctx : public core_t {
   std::vector<simd_function_unit *>
       m_fu;  // stallable pipelines should be last in this array
   ldst_unit *m_ldst_unit;
+  dae_ap_unit *m_dae_ap;
   static const unsigned MAX_ALU_LATENCY = 512;
   unsigned num_result_bus;
   std::vector<std::bitset<MAX_ALU_LATENCY> *> m_result_bus;
@@ -2658,6 +2681,9 @@ class simt_core_cluster {
   float get_current_occupancy(unsigned long long &active,
                               unsigned long long &total) const;
   virtual void create_shader_core_ctx() = 0;
+
+  // DAE AP: access individual cores for stats aggregation
+  shader_core_ctx *get_core(unsigned i) const { return m_core[i]; }
 
  protected:
   unsigned m_cluster_id;

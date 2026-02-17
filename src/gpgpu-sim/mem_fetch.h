@@ -130,6 +130,12 @@ class mem_fetch {
   mem_fetch *get_original_mf() { return original_mf; }
   mem_fetch *get_original_wr_mf() { return original_wr_mf; }
 
+  // DAE Access Processor
+  bool is_dae_ap_load() const { return m_is_dae_ap_load; }
+  void set_dae_ap_load(bool v) { m_is_dae_ap_load = v; }
+  unsigned get_dae_dest_reg() const { return m_dae_dest_reg; }
+  void set_dae_dest_reg(unsigned r) { m_dae_dest_reg = r; }
+
  private:
   // request source information
   unsigned m_request_uid;
@@ -178,6 +184,10 @@ class mem_fetch {
                      // size), so the pointer refers to the original request
   mem_fetch *original_wr_mf;  // this pointer refers to the original write req,
                               // when fetch-on-write policy is used
+
+  // DAE Access Processor
+  bool m_is_dae_ap_load;
+  unsigned m_dae_dest_reg;
 };
 
 #endif

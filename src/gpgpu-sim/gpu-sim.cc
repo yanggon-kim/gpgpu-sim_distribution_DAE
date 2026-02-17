@@ -662,6 +662,16 @@ void shader_core_config::reg_options(class OptionParser *opp) {
                            "OC_SPEC>:<OC_EX_SPEC>,<NAME>}",
                            "0,4,4,4,4,BRA");
   }
+
+  // DAE Access Processor options
+  option_parser_register(opp, "-gpgpu_dae_ap_enabled", OPT_BOOL,
+                         &gpgpu_dae_ap_enabled,
+                         "Enable DAE Access Processor per SM (default = off)",
+                         "0");
+  option_parser_register(opp, "-gpgpu_dae_ap_fifo_depth", OPT_UINT32,
+                         &gpgpu_dae_ap_fifo_depth,
+                         "DAE FIFO depth per warp in entries (default = 32)",
+                         "32");
 }
 
 void gpgpu_sim_config::reg_options(option_parser_t opp) {
@@ -1530,6 +1540,34 @@ void gpgpu_sim::gpu_print_stat(unsigned long long streamID) {
   shader_print_scheduler_stat(stdout, false);
 
   m_shader_stats->print(stdout);
+
+  // DAE Access Processor stats (aggregated across all SMs)
+  if (m_shader_config->gpgpu_dae_ap_enabled) {
+    unsigned long long total_loads = 0, total_stalls = 0, total_dep_stalls = 0;
+    unsigned long long total_pushes = 0, total_pops = 0, total_fifo_full = 0;
+    for (unsigned i = 0; i < m_config.num_cluster(); i++) {
+      for (unsigned j = 0; j < m_shader_config->n_simt_cores_per_cluster; j++) {
+        shader_core_ctx *core = m_cluster[i]->get_core(j);
+        dae_ap_unit *ap = core->get_dae_ap();
+        if (ap) {
+          total_loads += ap->get_loads_issued();
+          total_stalls += ap->get_stall_cycles();
+          total_dep_stalls += ap->get_dep_stalls();
+          total_pushes += ap->get_fifo_pushes();
+          total_pops += ap->get_fifo_pops();
+          total_fifo_full += ap->get_fifo_full_stalls();
+        }
+      }
+    }
+    printf("\n========= DAE Access Processor Stats =========\n");
+    printf("dae_ap_total_loads_issued = %llu\n", total_loads);
+    printf("dae_ap_total_fifo_pushes = %llu\n", total_pushes);
+    printf("dae_ap_total_fifo_pops = %llu\n", total_pops);
+    printf("dae_ap_total_stall_cycles = %llu\n", total_stalls);
+    printf("dae_ap_total_dep_stalls = %llu\n", total_dep_stalls);
+    printf("dae_ap_total_fifo_full_stalls = %llu\n", total_fifo_full);
+  }
+
 #ifdef GPGPUSIM_POWER_MODEL
   if (m_config.g_power_simulation_enabled) {
     if (m_config.g_power_simulation_mode > 0) {

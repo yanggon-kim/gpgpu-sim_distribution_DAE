@@ -501,6 +501,14 @@ shader_core_ctx::shader_core_ctx(class gpgpu_sim *gpu,
   m_occupied_ctas = 0;
   m_occupied_hwtid.reset();
   m_occupied_cta_to_hwtid.clear();
+
+  // DAE Access Processor
+  if (m_config->gpgpu_dae_ap_enabled) {
+    m_dae_ap = new dae_ap_unit(this, m_config, m_config->max_warps_per_shader,
+                               m_config->gpgpu_dae_ap_fifo_depth);
+  } else {
+    m_dae_ap = NULL;
+  }
 }
 
 void shader_core_ctx::reinit(unsigned start_thread, unsigned end_thread,
@@ -575,6 +583,11 @@ void shader_core_ctx::init_warps(unsigned cta_id, unsigned start_thread,
       ++m_dynamic_warp_id;
       m_not_completed += n_active;
       ++m_active_warps;
+
+      // DAE AP: activate warp
+      if (m_dae_ap) {
+        m_dae_ap->activate_warp(i, start_pc);
+      }
     }
   }
 }
@@ -2267,6 +2280,33 @@ bool ldst_unit::memory_cycle(warp_inst_t &inst,
   if (inst.active_count() == 0) return true;
   if (inst.accessq_empty()) return true;
 
+  // DAE AP: check if FIFO has pre-fetched data for this global load
+  if (m_core->dae_ap_enabled() && inst.is_load() && inst.space.is_global()) {
+    dae_ap_unit *dae_ap = m_core->get_dae_ap();
+    if (dae_ap && dae_ap->fifo_has_data(inst.warp_id())) {
+      // FIFO hit: consume token and complete load immediately
+      dae_ap->fifo_pop(inst.warp_id());
+
+      // Drain all accesses from queue (load is satisfied)
+      while (!inst.accessq_empty()) {
+        inst.accessq_pop_back();
+      }
+
+      // Complete pending writes and release scoreboard
+      for (unsigned r = 0; r < MAX_OUTPUT_VALUES; r++) {
+        if (inst.out[r] > 0) {
+          if (m_pending_writes[inst.warp_id()].count(inst.out[r]) > 0) {
+            m_pending_writes[inst.warp_id()][inst.out[r]] = 0;
+            m_pending_writes[inst.warp_id()].erase(inst.out[r]);
+          }
+          m_scoreboard->releaseRegister(inst.warp_id(), inst.out[r]);
+        }
+      }
+      m_core->warp_inst_complete(inst);
+      return true;  // load fully satisfied
+    }
+  }
+
   mem_stage_stall_type stall_cond = NO_RC_FAIL;
   const mem_access_t &access = inst.accessq_back();
 
@@ -2324,6 +2364,76 @@ bool ldst_unit::memory_cycle(warp_inst_t &inst,
       access_type = (iswrite) ? G_MEM_ST : G_MEM_LD;
   }
   return inst.accessq_empty();
+}
+
+bool ldst_unit::ap_access_load(unsigned warp_id, const warp_inst_t &inst,
+                               unsigned dest_reg) {
+  // AP issues a load to L1 cache. We construct a mem_fetch from the
+  // instruction's access queue and send it through the L1 cache or
+  // bypass path, tagging it as a DAE AP load.
+
+  if (inst.accessq_empty()) return false;
+
+  // Use the same alloc path as normal loads
+  warp_inst_t inst_copy = inst;
+  const mem_access_t &access = inst_copy.accessq_back();
+
+  bool bypassL1D = false;
+  if (CACHE_GLOBAL == inst_copy.cache_op || (m_L1D == NULL)) {
+    bypassL1D = true;
+  } else if (inst_copy.space.is_global()) {
+    if (m_core->get_config()->gmem_skip_L1D &&
+        (CACHE_L1 != inst_copy.cache_op))
+      bypassL1D = true;
+  }
+
+  if (bypassL1D) {
+    // Bypass L1: send directly to interconnect
+    unsigned control_size = READ_PACKET_SIZE;
+    unsigned size = access.get_size() + control_size;
+    if (m_icnt->full(size, false)) return false;
+
+    mem_fetch *mf = m_mf_allocator->alloc(
+        inst_copy, access,
+        m_core->get_gpu()->gpu_sim_cycle + m_core->get_gpu()->gpu_tot_sim_cycle);
+    mf->set_dae_ap_load(true);
+    mf->set_dae_dest_reg(dest_reg);
+    m_icnt->push(mf);
+  } else {
+    // Use L1 cache
+    if (m_config->m_L1D_config.l1_latency > 0) {
+      mem_fetch *mf = m_mf_allocator->alloc(
+          inst_copy, access,
+          m_core->get_gpu()->gpu_sim_cycle +
+              m_core->get_gpu()->gpu_tot_sim_cycle);
+      mf->set_dae_ap_load(true);
+      mf->set_dae_dest_reg(dest_reg);
+      unsigned bank_id = m_config->m_L1D_config.set_bank(mf->get_addr());
+      if (l1_latency_queue[bank_id][m_config->m_L1D_config.l1_latency - 1] !=
+          NULL) {
+        delete mf;
+        return false;  // L1 bank busy
+      }
+      l1_latency_queue[bank_id][m_config->m_L1D_config.l1_latency - 1] = mf;
+    } else {
+      mem_fetch *mf = m_mf_allocator->alloc(
+          inst_copy, access,
+          m_core->get_gpu()->gpu_sim_cycle +
+              m_core->get_gpu()->gpu_tot_sim_cycle);
+      mf->set_dae_ap_load(true);
+      mf->set_dae_dest_reg(dest_reg);
+      std::list<cache_event> events;
+      enum cache_request_status status =
+          m_L1D->access(mf->get_addr(), mf, m_core->get_gpu()->gpu_sim_cycle +
+                            m_core->get_gpu()->gpu_tot_sim_cycle, events);
+      if (status == RESERVATION_FAIL) {
+        delete mf;
+        return false;
+      }
+    }
+  }
+
+  return true;
 }
 
 bool ldst_unit::response_buffer_full() const {
@@ -3665,6 +3775,10 @@ void shader_core_ctx::cycle() {
   if (!isactive() && get_not_completed() == 0) return;
 
   m_stats->shader_cycles[m_sid]++;
+
+  // DAE AP runs first each cycle (runs ahead of EP)
+  if (m_dae_ap) m_dae_ap->cycle();
+
   writeback();
   execute();
   read_operands();
@@ -3680,6 +3794,10 @@ void shader_core_ctx::cycle() {
 void shader_core_ctx::cache_flush() { m_ldst_unit->flush(); }
 
 void shader_core_ctx::cache_invalidate() { m_ldst_unit->invalidate(); }
+
+unsigned long long shader_core_ctx::get_cycle() const {
+  return m_gpu->gpu_sim_cycle + m_gpu->gpu_tot_sim_cycle;
+}
 
 // modifiers
 std::list<opndcoll_rfu_t::op_t> opndcoll_rfu_t::arbiter_t::allocate_reads() {
@@ -3949,7 +4067,13 @@ void shader_core_ctx::warp_exit(unsigned warp_id) {
   }
   // if (m_warp[warp_id].get_n_completed() == get_config()->warp_size)
   // if (this->m_simt_stack[warp_id]->get_num_entries() == 0)
-  if (done) m_barriers.warp_exit(warp_id);
+  if (done) {
+    m_barriers.warp_exit(warp_id);
+    // DAE AP: deactivate warp
+    if (m_dae_ap) {
+      m_dae_ap->deactivate_warp(warp_id);
+    }
+  }
 }
 
 bool shader_core_ctx::check_if_non_released_reduction_barrier(

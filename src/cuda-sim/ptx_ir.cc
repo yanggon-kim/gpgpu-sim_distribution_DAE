@@ -651,6 +651,14 @@ void function_info::do_pdom() {
        ii += m_instr_mem[ii]->inst_size()) {  // handle branch instructions
     ptx_instruction *pI = m_instr_mem[ii];
     pI->pre_decode();
+    // Resolve branch target PC for DAE AP loop back-edge detection
+    if (pI->get_opcode() == BRA_OP) {
+      operand_info &target = pI->dst();
+      unsigned target_idx = labels[target.name()];
+      if (target_idx < m_instr_mem_size && m_instr_mem[target_idx]) {
+        pI->branch_target_pc = m_instr_mem[target_idx]->get_PC();
+      }
+    }
   }
   printf("GPGPU-Sim PTX: ... done pre-decoding instructions for \'%s\'.\n",
          m_name.c_str());
