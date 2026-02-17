@@ -58,6 +58,8 @@ class Scoreboard {
   bool daeCanBypass(unsigned wid) const;
   void daeIncrementLoad(unsigned wid);
   void daeDecrementLoad(unsigned wid);
+  void daeAddChainReg(unsigned wid, unsigned regnum);
+  void daeClearChainRegs(unsigned wid);
 
  private:
   void reserveRegister(unsigned wid, unsigned regnum);
@@ -76,6 +78,8 @@ class Scoreboard {
 
   // DAE: outstanding DAE-bypassed loads per warp
   std::vector<unsigned> m_dae_load_count;
+  // DAE: registers transitively dependent on long-ops (bypassed ALU outputs)
+  std::vector<std::set<unsigned> > m_dae_chain_regs;
 };
 
 #endif /* SCOREBOARD_H_ */

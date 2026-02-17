@@ -81,7 +81,9 @@ class gpgpu_sim_wrapper {};
 #include <sstream>
 #include <string>
 
-// #define MAX(a, b) (((a) > (b)) ? (a) : (b)) //redefined
+#ifndef MAX
+#define MAX(a, b) (((a) > (b)) ? (a) : (b))
+#endif
 
 bool g_interactive_debugger_enabled = false;
 
@@ -672,6 +674,10 @@ void shader_core_config::reg_options(class OptionParser *opp) {
       opp, "-gpgpu_dae_fifo_depth", OPT_UINT32, &gpgpu_dae_fifo_depth,
       "DAE FIFO depth: max outstanding DAE-bypassed loads per warp (default = 32)",
       "32");
+  option_parser_register(
+      opp, "-gpgpu_ibuffer_size", OPT_UINT32, &gpgpu_ibuffer_size,
+      "Number of instruction buffer entries per warp (default = 2)",
+      "2");
 }
 
 void gpgpu_sim_config::reg_options(option_parser_t opp) {

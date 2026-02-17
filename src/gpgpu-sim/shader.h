@@ -102,8 +102,10 @@ class thread_ctx_t {
 
 class shd_warp_t {
  public:
-  shd_warp_t(class shader_core_ctx *shader, unsigned warp_size)
-      : m_shader(shader), m_warp_size(warp_size) {
+  shd_warp_t(class shader_core_ctx *shader, unsigned warp_size,
+             unsigned ibuffer_size = 2)
+      : m_shader(shader), m_warp_size(warp_size),
+        m_ibuffer_size(ibuffer_size), m_ibuffer(ibuffer_size) {
     m_stores_outstanding = 0;
     m_inst_in_pipeline = 0;
     reset();
@@ -213,18 +215,18 @@ class shd_warp_t {
   }
 
   void ibuffer_fill(unsigned slot, const warp_inst_t *pI) {
-    assert(slot < IBUFFER_SIZE);
+    assert(slot < m_ibuffer_size);
     m_ibuffer[slot].m_inst = pI;
     m_ibuffer[slot].m_valid = true;
     m_next = 0;
   }
   bool ibuffer_empty() const {
-    for (unsigned i = 0; i < IBUFFER_SIZE; i++)
+    for (unsigned i = 0; i < m_ibuffer_size; i++)
       if (m_ibuffer[i].m_valid) return false;
     return true;
   }
   void ibuffer_flush() {
-    for (unsigned i = 0; i < IBUFFER_SIZE; i++) {
+    for (unsigned i = 0; i < m_ibuffer_size; i++) {
       if (m_ibuffer[i].m_valid) dec_inst_in_pipeline();
       m_ibuffer[i].m_inst = NULL;
       m_ibuffer[i].m_valid = false;
@@ -236,7 +238,7 @@ class shd_warp_t {
     m_ibuffer[m_next].m_inst = NULL;
     m_ibuffer[m_next].m_valid = false;
   }
-  void ibuffer_step() { m_next = (m_next + 1) % IBUFFER_SIZE; }
+  void ibuffer_step() { m_next = (m_next + 1) % m_ibuffer_size; }
 
   bool imiss_pending() const { return m_imiss_pending; }
   void set_imiss_pending() { m_imiss_pending = true; }
@@ -251,7 +253,7 @@ class shd_warp_t {
 
   unsigned num_inst_in_buffer() const {
     unsigned count = 0;
-    for (unsigned i = 0; i < IBUFFER_SIZE; i++) {
+    for (unsigned i = 0; i < m_ibuffer_size; i++) {
       if (m_ibuffer[i].m_valid) count++;
     }
     return count;
@@ -278,7 +280,6 @@ class shd_warp_t {
   }
 
  private:
-  static const unsigned IBUFFER_SIZE = 2;
   class shader_core_ctx *m_shader;
   unsigned long long m_streamID;
   unsigned m_cta_id;
@@ -302,7 +303,8 @@ class shd_warp_t {
   };
 
   warp_inst_t m_inst_at_barrier;
-  ibuffer_entry m_ibuffer[IBUFFER_SIZE];
+  unsigned m_ibuffer_size;
+  std::vector<ibuffer_entry> m_ibuffer;
   unsigned m_next;
 
   unsigned m_n_atomic;  // number of outstanding atomic operations
@@ -1720,6 +1722,7 @@ class shader_core_config : public core_config {
   // DAE (Decoupled Access-Execute) configuration
   bool gpgpu_dae_enabled;
   unsigned gpgpu_dae_fifo_depth;
+  unsigned gpgpu_ibuffer_size;
 };
 
 struct shader_core_stats_pod {
@@ -1936,6 +1939,8 @@ class shader_core_stats : public shader_core_stats_pod {
     // DAE stats
     m_dae_bypasses_total = 0;
     m_dae_bypasses_loads = 0;
+    m_dae_ibuffer_fills = 0;
+    m_dae_ibuffer_total_decoded = 0;
   }
 
   ~shader_core_stats() {
@@ -2002,6 +2007,8 @@ class shader_core_stats : public shader_core_stats_pod {
   // DAE statistics (public for direct access from scheduler)
   unsigned long long m_dae_bypasses_total;
   unsigned long long m_dae_bypasses_loads;
+  unsigned long long m_dae_ibuffer_fills;
+  unsigned long long m_dae_ibuffer_total_decoded;
 
   const std::vector<std::vector<unsigned>> &get_dynamic_warp_issue() const {
     return m_shader_dynamic_warp_issue_distro;

@@ -94,7 +94,8 @@ std::list<unsigned> shader_core_ctx::get_regs_written(const inst_t &fvt) const {
 void exec_shader_core_ctx::create_shd_warp() {
   m_warp.resize(m_config->max_warps_per_shader);
   for (unsigned k = 0; k < m_config->max_warps_per_shader; ++k) {
-    m_warp[k] = new shd_warp_t(this, m_config->warp_size);
+    m_warp[k] = new shd_warp_t(this, m_config->warp_size,
+                               m_config->gpgpu_ibuffer_size);
   }
 }
 
@@ -687,38 +688,38 @@ void shader_core_stats::print(FILE *fout) const {
               gpu_stall_shd_mem_breakdown[L_MEM_ST]
                                          [DATA_PORT_STALL]);  // data port stall
                                                               // at data cache
-  // fprintf(fout, "gpgpu_stall_shd_mem[g_mem_ld][mshr_rc] = %d\n",
-  // gpu_stall_shd_mem_breakdown[G_MEM_LD][MSHR_RC_FAIL]); fprintf(fout,
-  // "gpgpu_stall_shd_mem[g_mem_ld][icnt_rc] = %d\n",
-  // gpu_stall_shd_mem_breakdown[G_MEM_LD][ICNT_RC_FAIL]); fprintf(fout,
-  // "gpgpu_stall_shd_mem[g_mem_ld][wb_icnt_rc] = %d\n",
-  // gpu_stall_shd_mem_breakdown[G_MEM_LD][WB_ICNT_RC_FAIL]); fprintf(fout,
-  // "gpgpu_stall_shd_mem[g_mem_ld][wb_rsrv_fail] = %d\n",
-  // gpu_stall_shd_mem_breakdown[G_MEM_LD][WB_CACHE_RSRV_FAIL]); fprintf(fout,
-  // "gpgpu_stall_shd_mem[g_mem_st][mshr_rc] = %d\n",
-  // gpu_stall_shd_mem_breakdown[G_MEM_ST][MSHR_RC_FAIL]); fprintf(fout,
-  // "gpgpu_stall_shd_mem[g_mem_st][icnt_rc] = %d\n",
-  // gpu_stall_shd_mem_breakdown[G_MEM_ST][ICNT_RC_FAIL]); fprintf(fout,
-  // "gpgpu_stall_shd_mem[g_mem_st][wb_icnt_rc] = %d\n",
-  // gpu_stall_shd_mem_breakdown[G_MEM_ST][WB_ICNT_RC_FAIL]); fprintf(fout,
-  // "gpgpu_stall_shd_mem[g_mem_st][wb_rsrv_fail] = %d\n",
-  // gpu_stall_shd_mem_breakdown[G_MEM_ST][WB_CACHE_RSRV_FAIL]); fprintf(fout,
-  // "gpgpu_stall_shd_mem[l_mem_ld][mshr_rc] = %d\n",
-  // gpu_stall_shd_mem_breakdown[L_MEM_LD][MSHR_RC_FAIL]); fprintf(fout,
-  // "gpgpu_stall_shd_mem[l_mem_ld][icnt_rc] = %d\n",
-  // gpu_stall_shd_mem_breakdown[L_MEM_LD][ICNT_RC_FAIL]); fprintf(fout,
-  // "gpgpu_stall_shd_mem[l_mem_ld][wb_icnt_rc] = %d\n",
-  // gpu_stall_shd_mem_breakdown[L_MEM_LD][WB_ICNT_RC_FAIL]); fprintf(fout,
-  // "gpgpu_stall_shd_mem[l_mem_ld][wb_rsrv_fail] = %d\n",
-  // gpu_stall_shd_mem_breakdown[L_MEM_LD][WB_CACHE_RSRV_FAIL]); fprintf(fout,
-  // "gpgpu_stall_shd_mem[l_mem_st][mshr_rc] = %d\n",
-  // gpu_stall_shd_mem_breakdown[L_MEM_ST][MSHR_RC_FAIL]); fprintf(fout,
-  // "gpgpu_stall_shd_mem[l_mem_st][icnt_rc] = %d\n",
-  // gpu_stall_shd_mem_breakdown[L_MEM_ST][ICNT_RC_FAIL]); fprintf(fout,
-  // "gpgpu_stall_shd_mem[l_mem_ld][wb_icnt_rc] = %d\n",
-  // gpu_stall_shd_mem_breakdown[L_MEM_ST][WB_ICNT_RC_FAIL]); fprintf(fout,
-  // "gpgpu_stall_shd_mem[l_mem_ld][wb_rsrv_fail] = %d\n",
-  // gpu_stall_shd_mem_breakdown[L_MEM_ST][WB_CACHE_RSRV_FAIL]);
+  fprintf(fout, "gpgpu_stall_shd_mem[g_mem_ld][mshr_rc] = %d\n",
+  gpu_stall_shd_mem_breakdown[G_MEM_LD][MSHR_RC_FAIL]);
+  fprintf(fout, "gpgpu_stall_shd_mem[g_mem_ld][icnt_rc] = %d\n",
+  gpu_stall_shd_mem_breakdown[G_MEM_LD][ICNT_RC_FAIL]);
+  fprintf(fout, "gpgpu_stall_shd_mem[g_mem_ld][wb_icnt_rc] = %d\n",
+  gpu_stall_shd_mem_breakdown[G_MEM_LD][WB_ICNT_RC_FAIL]);
+  fprintf(fout, "gpgpu_stall_shd_mem[g_mem_ld][wb_rsrv_fail] = %d\n",
+  gpu_stall_shd_mem_breakdown[G_MEM_LD][WB_CACHE_RSRV_FAIL]);
+  fprintf(fout, "gpgpu_stall_shd_mem[g_mem_st][mshr_rc] = %d\n",
+  gpu_stall_shd_mem_breakdown[G_MEM_ST][MSHR_RC_FAIL]);
+  fprintf(fout, "gpgpu_stall_shd_mem[g_mem_st][icnt_rc] = %d\n",
+  gpu_stall_shd_mem_breakdown[G_MEM_ST][ICNT_RC_FAIL]);
+  fprintf(fout, "gpgpu_stall_shd_mem[g_mem_st][wb_icnt_rc] = %d\n",
+  gpu_stall_shd_mem_breakdown[G_MEM_ST][WB_ICNT_RC_FAIL]);
+  fprintf(fout, "gpgpu_stall_shd_mem[g_mem_st][wb_rsrv_fail] = %d\n",
+  gpu_stall_shd_mem_breakdown[G_MEM_ST][WB_CACHE_RSRV_FAIL]);
+  fprintf(fout, "gpgpu_stall_shd_mem[l_mem_ld][mshr_rc] = %d\n",
+  gpu_stall_shd_mem_breakdown[L_MEM_LD][MSHR_RC_FAIL]);
+  fprintf(fout, "gpgpu_stall_shd_mem[l_mem_ld][icnt_rc] = %d\n",
+  gpu_stall_shd_mem_breakdown[L_MEM_LD][ICNT_RC_FAIL]);
+  fprintf(fout, "gpgpu_stall_shd_mem[l_mem_ld][wb_icnt_rc] = %d\n",
+  gpu_stall_shd_mem_breakdown[L_MEM_LD][WB_ICNT_RC_FAIL]);
+  fprintf(fout, "gpgpu_stall_shd_mem[l_mem_ld][wb_rsrv_fail] = %d\n",
+  gpu_stall_shd_mem_breakdown[L_MEM_LD][WB_CACHE_RSRV_FAIL]);
+  fprintf(fout, "gpgpu_stall_shd_mem[l_mem_st][mshr_rc] = %d\n",
+  gpu_stall_shd_mem_breakdown[L_MEM_ST][MSHR_RC_FAIL]);
+  fprintf(fout, "gpgpu_stall_shd_mem[l_mem_st][icnt_rc] = %d\n",
+  gpu_stall_shd_mem_breakdown[L_MEM_ST][ICNT_RC_FAIL]);
+  fprintf(fout, "gpgpu_stall_shd_mem[l_mem_st][wb_icnt_rc] = %d\n",
+  gpu_stall_shd_mem_breakdown[L_MEM_ST][WB_ICNT_RC_FAIL]);
+  fprintf(fout, "gpgpu_stall_shd_mem[l_mem_st][wb_rsrv_fail] = %d\n",
+  gpu_stall_shd_mem_breakdown[L_MEM_ST][WB_CACHE_RSRV_FAIL]);
 
   fprintf(fout, "gpu_reg_bank_conflict_stalls = %d\n",
           gpu_reg_bank_conflict_stalls);
@@ -743,6 +744,11 @@ void shader_core_stats::print(FILE *fout) const {
   if (m_config->gpgpu_dae_enabled) {
     fprintf(fout, "gpgpu_dae_bypasses_total = %llu\n", m_dae_bypasses_total);
     fprintf(fout, "gpgpu_dae_bypasses_loads = %llu\n", m_dae_bypasses_loads);
+    if (m_dae_ibuffer_fills > 0) {
+      fprintf(fout, "gpgpu_dae_ibuffer_avg_fill = %.1f (fills=%llu, decoded=%llu)\n",
+              (double)m_dae_ibuffer_total_decoded / m_dae_ibuffer_fills,
+              m_dae_ibuffer_fills, m_dae_ibuffer_total_decoded);
+    }
   }
 
   m_outgoing_traffic_stats->print(fout);
@@ -894,34 +900,30 @@ const active_mask_t &exec_shader_core_ctx::get_active_mask(
 
 void shader_core_ctx::decode() {
   if (m_inst_fetch_buffer.m_valid) {
-    // decode 1 or 2 instructions and place them into ibuffer
+    // decode up to ibuffer_size instructions and place them into ibuffer
     address_type pc = m_inst_fetch_buffer.m_pc;
-    const warp_inst_t *pI1 = get_next_inst(m_inst_fetch_buffer.m_warp_id, pc);
-    m_warp[m_inst_fetch_buffer.m_warp_id]->ibuffer_fill(0, pI1);
-    m_warp[m_inst_fetch_buffer.m_warp_id]->inc_inst_in_pipeline();
-    if (pI1) {
+    unsigned wid = m_inst_fetch_buffer.m_warp_id;
+    unsigned ibuf_size = m_config->gpgpu_ibuffer_size;
+
+    unsigned decoded_this_fill = 0;
+    for (unsigned slot = 0; slot < ibuf_size; slot++) {
+      const warp_inst_t *pI = get_next_inst(wid, pc);
+      if (!pI) break;
+      m_warp[wid]->ibuffer_fill(slot, pI);
+      m_warp[wid]->inc_inst_in_pipeline();
       m_stats->m_num_decoded_insn[m_sid]++;
-      if ((pI1->oprnd_type == INT_OP) ||
-          (pI1->oprnd_type == UN_OP)) {  // these counters get added up in mcPat
-                                         // to compute scheduler power
+      if ((pI->oprnd_type == INT_OP) || (pI->oprnd_type == UN_OP)) {
         m_stats->m_num_INTdecoded_insn[m_sid]++;
-      } else if (pI1->oprnd_type == FP_OP) {
+      } else if (pI->oprnd_type == FP_OP) {
         m_stats->m_num_FPdecoded_insn[m_sid]++;
       }
-      const warp_inst_t *pI2 =
-          get_next_inst(m_inst_fetch_buffer.m_warp_id, pc + pI1->isize);
-      if (pI2) {
-        m_warp[m_inst_fetch_buffer.m_warp_id]->ibuffer_fill(1, pI2);
-        m_warp[m_inst_fetch_buffer.m_warp_id]->inc_inst_in_pipeline();
-        m_stats->m_num_decoded_insn[m_sid]++;
-        if ((pI1->oprnd_type == INT_OP) ||
-            (pI1->oprnd_type == UN_OP)) {  // these counters get added up in
-                                           // mcPat to compute scheduler power
-          m_stats->m_num_INTdecoded_insn[m_sid]++;
-        } else if (pI2->oprnd_type == FP_OP) {
-          m_stats->m_num_FPdecoded_insn[m_sid]++;
-        }
-      }
+      pc += pI->isize;
+      decoded_this_fill++;
+    }
+    // Track ibuffer fill stats (first SM only to avoid flooding)
+    if (m_sid == 0) {
+      m_stats->m_dae_ibuffer_fills++;
+      m_stats->m_dae_ibuffer_total_decoded += decoded_this_fill;
     }
     m_inst_fetch_buffer.m_valid = false;
   }
@@ -1539,6 +1541,17 @@ void scheduler_unit::cycle() {
                 m_stats->m_dae_bypasses_loads++;
               }
               m_stats->m_dae_bypasses_total++;
+
+              // DAE transitive chain: mark outputs of bypassed non-load
+              // instructions so subsequent instructions depending on them
+              // can also bypass (e.g., SHL->ADD->LD chain after a load)
+              if (!is_load) {
+                for (unsigned r = 0; r < MAX_OUTPUT_VALUES; r++) {
+                  if (pI->out[r] > 0) {
+                    m_scoreboard->daeAddChainReg(warp_id, pI->out[r]);
+                  }
+                }
+              }
             }
           } else {
             SCHED_DPRINTF(
@@ -4185,7 +4198,7 @@ void shd_warp_t::print(FILE *fout) const {
 
 void shd_warp_t::print_ibuffer(FILE *fout) const {
   fprintf(fout, "  ibuffer[%2u] : ", m_warp_id);
-  for (unsigned i = 0; i < IBUFFER_SIZE; i++) {
+  for (unsigned i = 0; i < m_ibuffer_size; i++) {
     const inst_t *inst = m_ibuffer[i].m_inst;
     if (inst)
       inst->print_insn(fout);

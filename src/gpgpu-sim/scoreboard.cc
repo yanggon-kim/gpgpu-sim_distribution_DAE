@@ -43,8 +43,9 @@ Scoreboard::Scoreboard(unsigned sid, unsigned n_warps, class gpgpu_t* gpu,
   m_gpu = gpu;
   m_config = config;
 
-  // DAE: initialize per-warp load counters
+  // DAE: initialize per-warp load counters and chain tracking
   m_dae_load_count.resize(n_warps, 0);
+  m_dae_chain_regs.resize(n_warps);
 }
 
 // Print scoreboard contents
@@ -86,6 +87,8 @@ void Scoreboard::releaseRegister(unsigned wid, unsigned regnum) {
   SHADER_DPRINTF(SCOREBOARD, "Release register - warp:%d, reg: %d\n", wid,
                  regnum);
   reg_table[wid].erase(regnum);
+  // DAE: also clear from transitive chain tracking
+  m_dae_chain_regs[wid].erase(regnum);
 }
 
 const bool Scoreboard::islongop(unsigned warp_id, unsigned regnum) {
@@ -126,6 +129,7 @@ void Scoreboard::releaseRegisters(const class warp_inst_t* inst) {
                      inst->warp_id(), inst->out[r]);
       releaseRegister(inst->warp_id(), inst->out[r]);
       longopregs[inst->warp_id()].erase(inst->out[r]);
+      // releaseRegister already clears m_dae_chain_regs
     }
   }
 }
@@ -165,10 +169,10 @@ bool Scoreboard::pendingWrites(unsigned wid) const {
   return !reg_table[wid].empty();
 }
 
-// DAE: Check if ALL collisions are due to long-operation registers
-// (i.e., loads from global/local/tex memory). Returns true only if every
-// colliding register is in longopregs — mixed dependencies (some long-op,
-// some ALU) are NOT safe to bypass.
+// DAE: Check if ALL collisions are due to long-operation registers OR
+// registers transitively dependent on long-ops (dae_chain_regs).
+// Returns true only if every colliding register is in longopregs or
+// dae_chain_regs — mixed dependencies are NOT safe to bypass.
 bool Scoreboard::pendingOnLongOp(unsigned wid, const inst_t* inst) const {
   std::set<int> inst_regs;
   for (unsigned i = 0; i < inst->outcount; i++)
@@ -184,8 +188,10 @@ bool Scoreboard::pendingOnLongOp(unsigned wid, const inst_t* inst) const {
        it != inst_regs.end(); it++) {
     if (reg_table[wid].find(*it) != reg_table[wid].end()) {
       has_any_collision = true;
-      // If this collision is NOT from a long op, bypass is unsafe
-      if (longopregs[wid].find(*it) == longopregs[wid].end()) {
+      // Collision is safe to bypass if register is a longop OR transitively
+      // dependent on a longop (in the DAE chain)
+      if (longopregs[wid].find(*it) == longopregs[wid].end() &&
+          m_dae_chain_regs[wid].find(*it) == m_dae_chain_regs[wid].end()) {
         return false;
       }
     }
@@ -205,4 +211,12 @@ void Scoreboard::daeIncrementLoad(unsigned wid) {
 void Scoreboard::daeDecrementLoad(unsigned wid) {
   assert(m_dae_load_count[wid] > 0);
   m_dae_load_count[wid]--;
+}
+
+void Scoreboard::daeAddChainReg(unsigned wid, unsigned regnum) {
+  m_dae_chain_regs[wid].insert(regnum);
+}
+
+void Scoreboard::daeClearChainRegs(unsigned wid) {
+  m_dae_chain_regs[wid].clear();
 }
