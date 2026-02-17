@@ -1543,7 +1543,7 @@ void gpgpu_sim::gpu_print_stat(unsigned long long streamID) {
 
   // DAE Access Processor stats (aggregated across all SMs)
   if (m_shader_config->gpgpu_dae_ap_enabled) {
-    unsigned long long total_loads = 0, total_stalls = 0, total_dep_stalls = 0;
+    unsigned long long total_loads = 0, total_stalls = 0;
     unsigned long long total_pushes = 0, total_pops = 0, total_fifo_full = 0;
     for (unsigned i = 0; i < m_config.num_cluster(); i++) {
       for (unsigned j = 0; j < m_shader_config->n_simt_cores_per_cluster; j++) {
@@ -1552,7 +1552,6 @@ void gpgpu_sim::gpu_print_stat(unsigned long long streamID) {
         if (ap) {
           total_loads += ap->get_loads_issued();
           total_stalls += ap->get_stall_cycles();
-          total_dep_stalls += ap->get_dep_stalls();
           total_pushes += ap->get_fifo_pushes();
           total_pops += ap->get_fifo_pops();
           total_fifo_full += ap->get_fifo_full_stalls();
@@ -1564,7 +1563,6 @@ void gpgpu_sim::gpu_print_stat(unsigned long long streamID) {
     printf("dae_ap_total_fifo_pushes = %llu\n", total_pushes);
     printf("dae_ap_total_fifo_pops = %llu\n", total_pops);
     printf("dae_ap_total_stall_cycles = %llu\n", total_stalls);
-    printf("dae_ap_total_dep_stalls = %llu\n", total_dep_stalls);
     printf("dae_ap_total_fifo_full_stalls = %llu\n", total_fifo_full);
   }
 

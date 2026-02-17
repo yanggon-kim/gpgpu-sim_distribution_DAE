@@ -961,6 +961,7 @@ void shader_core_ctx::fetch() {
         // reclaimed
         if (m_warp[warp_id]->hardware_done() &&
             !m_scoreboard->pendingWrites(warp_id) &&
+            !m_ldst_unit->has_pending_writes(warp_id) &&
             !m_warp[warp_id]->done_exit()) {
           bool did_exit = false;
           for (unsigned t = 0; t < m_config->warp_size; t++) {
@@ -2280,30 +2281,15 @@ bool ldst_unit::memory_cycle(warp_inst_t &inst,
   if (inst.active_count() == 0) return true;
   if (inst.accessq_empty()) return true;
 
-  // DAE AP: check if FIFO has pre-fetched data for this global load
-  if (m_core->dae_ap_enabled() && inst.is_load() && inst.space.is_global()) {
+  // DAE AP: pre-mark the instruction BEFORE mem_fetch copy is created.
+  // This ensures writeback paths see the correct m_dae_ap_load flag.
+  bool dae_will_release = false;
+  if (!inst.m_dae_ap_load && m_core->dae_ap_enabled() &&
+      inst.is_load() && inst.space.is_global()) {
     dae_ap_unit *dae_ap = m_core->get_dae_ap();
     if (dae_ap && dae_ap->fifo_has_data(inst.warp_id())) {
-      // FIFO hit: consume token and complete load immediately
-      dae_ap->fifo_pop(inst.warp_id());
-
-      // Drain all accesses from queue (load is satisfied)
-      while (!inst.accessq_empty()) {
-        inst.accessq_pop_back();
-      }
-
-      // Complete pending writes and release scoreboard
-      for (unsigned r = 0; r < MAX_OUTPUT_VALUES; r++) {
-        if (inst.out[r] > 0) {
-          if (m_pending_writes[inst.warp_id()].count(inst.out[r]) > 0) {
-            m_pending_writes[inst.warp_id()][inst.out[r]] = 0;
-            m_pending_writes[inst.warp_id()].erase(inst.out[r]);
-          }
-          m_scoreboard->releaseRegister(inst.warp_id(), inst.out[r]);
-        }
-      }
-      m_core->warp_inst_complete(inst);
-      return true;  // load fully satisfied
+      inst.m_dae_ap_load = true;  // set before mem_fetch alloc copies inst
+      dae_will_release = true;
     }
   }
 
@@ -2353,6 +2339,25 @@ bool ldst_unit::memory_cycle(warp_inst_t &inst,
     assert(CACHE_UNDEFINED != inst.cache_op);
     stall_cond = process_memory_access_queue_l1cache(m_L1D, inst);
   }
+
+  // DAE AP: complete scoreboard release if access succeeded, undo if stalled.
+  if (dae_will_release) {
+    if (stall_cond == NO_RC_FAIL) {
+      dae_ap_unit *dae_ap = m_core->get_dae_ap();
+      dae_ap->fifo_pop(inst.warp_id());
+
+      // Early scoreboard release — dependent instructions can proceed
+      for (unsigned r = 0; r < MAX_OUTPUT_VALUES; r++) {
+        if (inst.out[r] > 0) {
+          m_scoreboard->releaseRegister(inst.warp_id(), inst.out[r]);
+        }
+      }
+    } else {
+      // Access stalled, undo the pre-mark
+      inst.m_dae_ap_load = false;
+    }
+  }
+
   if (!inst.accessq_empty() && stall_cond == NO_RC_FAIL)
     stall_cond = COAL_STALL;
   if (stall_cond != NO_RC_FAIL) {

@@ -1459,6 +1459,14 @@ class ldst_unit : public pipelined_simd_unit {
   std::map<unsigned /*warp_id*/,
            std::map<unsigned /*regnum*/, unsigned /*count*/>>
       m_pending_writes;
+  // DAE: check if warp has any outstanding memory writes (loads in flight)
+ public:
+  bool has_pending_writes(unsigned warp_id) const {
+    auto it = m_pending_writes.find(warp_id);
+    return (it != m_pending_writes.end()) && !it->second.empty();
+  }
+
+ private:
   std::list<mem_fetch *> m_response_fifo;
   opndcoll_rfu_t *m_operand_collector;
   Scoreboard *m_scoreboard;
